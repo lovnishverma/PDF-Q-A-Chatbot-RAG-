@@ -121,8 +121,8 @@ license: mit
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/lovnishverma/pdf-rag-chatbot.git
-cd pdf-rag-chatbot
+git clone https://github.com/lovnishverma/PDF-Q-A-Chatbot-RAG-.git
+cd PDF-Q-A-Chatbot-RAG-
 
 # 2. Install dependencies
 pip install -r requirements.txt
@@ -147,10 +147,10 @@ python app.py
 pip install huggingface_hub
 huggingface-cli login
 
-git clone https://huggingface.co/spaces/YOUR_USERNAME/pdf-rag-chatbot
-cp app.py requirements.txt pdf-rag-chatbot/
-cd pdf-rag-chatbot
-git add . && git commit -m "deploy RAG chatbot" && git push
+git clone https://huggingface.co/spaces/LovnishVerma/rag
+cp app.py requirements.txt rag/
+cd rag
+git add . && git commit -m "deploy rag" && git push
 ```
 
 ---
