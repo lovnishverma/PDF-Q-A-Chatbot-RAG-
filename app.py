@@ -43,14 +43,19 @@ print("✅ Embeddings ready.")
 print("⏳ Loading LLM (TinyLlama-1.1B-Chat)...")
 tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL)
 model     = AutoModelForCausalLM.from_pretrained(LLM_MODEL, dtype=torch.float32)
+from transformers import GenerationConfig as HFGenerationConfig
+
+_gen_cfg = HFGenerationConfig(
+    max_new_tokens=256,
+    do_sample=False,
+    repetition_penalty=1.3,
+)
 hf_pipe   = pipeline(
     "text-generation",
     model=model,
     tokenizer=tokenizer,
     return_full_text=False,
-    max_new_tokens=256,
-    do_sample=False,
-    repetition_penalty=1.3,
+    generation_config=_gen_cfg,
     device=0 if torch.cuda.is_available() else -1,
 )
 llm = HuggingFacePipeline(pipeline=hf_pipe)
@@ -90,28 +95,6 @@ def clean_answer(raw: str) -> str:
         if idx > 30:          # keep at least 30 chars of real answer
             raw = raw[:idx]
     return raw.strip() or "I don't know based on the document."
-
-# ─────────────────────────────────────────────
-# PROMPT  (no memory dependency — history is
-# passed manually as a formatted string)
-# ─────────────────────────────────────────────
-PROMPT = PromptTemplate.from_template(
-    """You are a helpful assistant that answers questions based on the provided PDF document.
-Use only the context below to answer. If the answer is not in the context, say "I don't know based on the document."
-
-Context:
-{context}
-
-Chat History:
-{chat_history}
-
-Question: {question}
-
-Answer:"""
-)
-
-def format_docs(docs):
-    return "\n\n".join(d.page_content for d in docs)
 
 # ─────────────────────────────────────────────
 # PROCESS PDF
