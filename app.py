@@ -43,15 +43,12 @@ print("✅ Embeddings ready.")
 
 print("⏳ Loading LLM (TinyLlama-1.1B-Chat)...")
 tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL)
-model     = AutoModelForCausalLM.from_pretrained(LLM_MODEL, torch_dtype=torch.float32)
+model     = AutoModelForCausalLM.from_pretrained(LLM_MODEL, dtype=torch.float32)
 hf_pipe   = pipeline(
     "text-generation",
     model=model,
     tokenizer=tokenizer,
     max_new_tokens=512,
-    do_sample=False,
-    temperature=None,
-    top_p=None,
     repetition_penalty=1.15,
     return_full_text=False,
     device=0 if torch.cuda.is_available() else -1
@@ -282,7 +279,8 @@ with gr.Blocks(
         with gr.Column(scale=2):
             gr.Markdown("### 💬 Ask Questions")
             chatbot = gr.Chatbot(label="Conversation", height=450,
-                                 bubble_full_width=False, elem_classes=["chat-window"])
+                                 bubble_full_width=False, type="tuples",
+                                 elem_classes=["chat-window"])
             with gr.Row():
                 msg_input = gr.Textbox(placeholder="Ask something about the PDF...",
                                        label="", scale=4, interactive=False)
