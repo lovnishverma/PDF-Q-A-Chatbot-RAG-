@@ -13,13 +13,13 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
 EMBED_MODEL   = "BAAI/bge-small-en-v1.5"
-LLM_MODEL     = "google/flan-t5-base"
+LLM_MODEL     = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 CHUNK_SIZE    = 500
 CHUNK_OVERLAP = 50
 TOP_K         = 5
@@ -41,15 +41,19 @@ embeddings = HuggingFaceEmbeddings(
 )
 print("✅ Embeddings ready.")
 
-print("⏳ Loading LLM (flan-t5-base)...")
+print("⏳ Loading LLM (TinyLlama-1.1B-Chat)...")
 tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL)
-model     = AutoModelForSeq2SeqLM.from_pretrained(LLM_MODEL)
+model     = AutoModelForCausalLM.from_pretrained(LLM_MODEL, torch_dtype=torch.float32)
 hf_pipe   = pipeline(
-    "text2text-generation",
+    "text-generation",
     model=model,
     tokenizer=tokenizer,
     max_new_tokens=512,
     do_sample=False,
+    temperature=None,
+    top_p=None,
+    repetition_penalty=1.15,
+    return_full_text=False,
     device=0 if torch.cuda.is_available() else -1
 )
 llm = HuggingFacePipeline(pipeline=hf_pipe)
@@ -243,7 +247,7 @@ with gr.Blocks(
             📄 PDF Q&amp;A Chatbot
         </h1>
         <p style="color:#94a3b8;font-size:0.95rem;margin-top:8px;">
-            Retrieval-Augmented Generation · FAISS · BGE Embeddings · Flan-T5
+            Retrieval-Augmented Generation · FAISS · BGE Embeddings · TinyLlama
         </p>
         <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap;">
             <span style="background:#0d9488;color:white;padding:3px 12px;border-radius:20px;font-size:0.8rem;">🆓 100% Free</span>
@@ -271,7 +275,7 @@ with gr.Blocks(
 **Stack:**
 - 🧠 `BAAI/bge-small-en-v1.5` embeddings
 - 📦 FAISS vector store (local)
-- 🤖 `google/flan-t5-base` LLM
+- 🤖 `TinyLlama-1.1B-Chat` LLM
 - 🔗 LangChain LCEL pipeline
             """)
 
