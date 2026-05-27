@@ -20,25 +20,24 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 
-# ─────────────────────────────────────────────
 # CONFIG
-# ─────────────────────────────────────────────
+
 EMBED_MODEL  = "BAAI/bge-small-en-v1.5"      # Free, fast, good quality (~130MB)
 LLM_MODEL    = "google/flan-t5-base"          # Free, runs on CPU (~250MB)
 CHUNK_SIZE   = 500
 CHUNK_OVERLAP = 50
 TOP_K        = 5
 
-# ─────────────────────────────────────────────
+
 # GLOBAL STATE
-# ─────────────────────────────────────────────
+
 vectorstore  = None
 qa_chain     = None
 chat_history = []
 
-# ─────────────────────────────────────────────
+
 # LOAD EMBEDDING MODEL (cached after first load)
-# ─────────────────────────────────────────────
+
 print("⏳ Loading embedding model...")
 embeddings = HuggingFaceEmbeddings(
     model_name=EMBED_MODEL,
@@ -47,9 +46,9 @@ embeddings = HuggingFaceEmbeddings(
 )
 print("✅ Embedding model loaded.")
 
-# ─────────────────────────────────────────────
+
 # LOAD LLM (flan-t5-base — free, CPU-friendly)
-# ─────────────────────────────────────────────
+
 print("⏳ Loading LLM (flan-t5-base)...")
 tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL)
 model     = AutoModelForSeq2SeqLM.from_pretrained(LLM_MODEL)
@@ -65,9 +64,9 @@ hf_pipeline = pipeline(
 llm = HuggingFacePipeline(pipeline=hf_pipeline)
 print("✅ LLM loaded.")
 
-# ─────────────────────────────────────────────
+
 # PROMPT TEMPLATE
-# ─────────────────────────────────────────────
+
 PROMPT_TEMPLATE = """You are a helpful assistant that answers questions based on the provided PDF document.
 Use only the context below to answer. If you don't know, say "I don't know based on the document."
 
@@ -86,9 +85,9 @@ QA_PROMPT = PromptTemplate(
     template=PROMPT_TEMPLATE
 )
 
-# ─────────────────────────────────────────────
+
 # PROCESS PDF
-# ─────────────────────────────────────────────
+
 def process_pdf(pdf_file):
     global vectorstore, qa_chain, chat_history
 
@@ -149,9 +148,8 @@ def process_pdf(pdf_file):
         return f"❌ Error processing PDF: {str(e)}", gr.update(interactive=False)
 
 
-# ─────────────────────────────────────────────
 # CHAT FUNCTION
-# ─────────────────────────────────────────────
+
 def chat(user_message, history):
     global qa_chain
 
@@ -195,9 +193,8 @@ def clear_chat():
     return [], ""
 
 
-# ─────────────────────────────────────────────
 # GRADIO UI
-# ─────────────────────────────────────────────
+
 CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;500;600&display=swap');
 
@@ -255,7 +252,27 @@ with gr.Blocks(
 ) as demo:
 
     gr.HTML("""
-    <div style="text-align:center; padding: 24px 0 8px;">
+    <div style="background:#1e293b; border-bottom:1px solid #334155; padding:10px 24px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:center; gap:14px;">
+            <img src="https://www.nielit.gov.in/images/NIELIT_logo.jpg"
+                 alt="NIELIT Logo"
+                 style="height:52px; border-radius:6px; background:white; padding:3px;"
+                 onerror="this.style.display='none'">
+            <div>
+                <div style="font-family:'Space Mono',monospace; color:#14b8a6; font-size:0.78rem; font-weight:700; letter-spacing:0.05em;">
+                    NATIONAL INSTITUTE OF ELECTRONICS &amp; INFORMATION TECHNOLOGY
+                </div>
+                <div style="color:#94a3b8; font-size:0.72rem; margin-top:1px;">
+                    NIELIT Ropar &nbsp;·&nbsp; Deemed to be University &nbsp;·&nbsp; Ministry of Electronics &amp; IT, Govt. of India
+                </div>
+            </div>
+        </div>
+        <div style="color:#475569; font-size:0.72rem; text-align:right; font-family:'Space Mono',monospace;">
+            M.Tech AI · DOAI250006<br>Deep Learning Techniques
+        </div>
+    </div>
+
+    <div style="text-align:center; padding: 20px 0 8px;">
         <h1 style="font-family:'Space Mono',monospace; font-size:2rem; color:#14b8a6; margin:0;">
             📄 PDF Q&amp;A Chatbot
         </h1>
@@ -271,7 +288,7 @@ with gr.Blocks(
     """)
 
     with gr.Row():
-        # ── LEFT: Upload ──────────────────────────────
+        # LEFT: Upload
         with gr.Column(scale=1):
             gr.Markdown("### 📁 Upload PDF")
             pdf_input = gr.File(
@@ -302,7 +319,7 @@ with gr.Blocks(
             - 🔗 LangChain ConversationalRetrievalChain
             """)
 
-        # ── RIGHT: Chat ───────────────────────────────
+        # RIGHT: Chat
         with gr.Column(scale=2):
             gr.Markdown("### 💬 Ask Questions")
             chatbot = gr.Chatbot(
@@ -321,7 +338,7 @@ with gr.Blocks(
                 send_btn  = gr.Button("Send ➤", variant="primary", scale=1)
             clear_btn = gr.Button("🗑️ Clear Chat", variant="secondary", size="sm")
 
-    # ── EVENTS ──────────────────────────────────────
+    # EVENTS
     process_btn.click(
         fn=process_pdf,
         inputs=[pdf_input],
@@ -346,9 +363,24 @@ with gr.Blocks(
     )
 
     gr.HTML("""
-    <div style="text-align:center; padding:16px; color:#475569; font-size:0.8rem; font-family:'Space Mono',monospace;">
-        Built for NIELIT Ropar · Project 1 — PDF Q&amp;A Chatbot (RAG) · 
-        <a href="https://github.com/lovnishverma" style="color:#0d9488;">@lovnishverma</a>
+    <div style="background:#1e293b; border-top:1px solid #334155; margin-top:24px; padding:16px 24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <img src="https://www.nielit.gov.in/images/NIELIT_logo.jpg"
+                     alt="NIELIT"
+                     style="height:32px; border-radius:4px; background:white; padding:2px;"
+                     onerror="this.style.display='none'">
+                <span style="color:#475569; font-size:0.78rem; font-family:'Space Mono',monospace;">
+                    &copy; 2025 NIELIT Ropar. All rights reserved.
+                </span>
+            </div>
+            <div style="color:#475569; font-size:0.78rem; font-family:'Space Mono',monospace; text-align:right;">
+                Project 1 — RAG Chatbot &nbsp;|&nbsp;
+                Developed by <a href="https://github.com/lovnishverma" style="color:#0d9488; text-decoration:none;">Lovnish Verma</a>
+                &nbsp;|&nbsp;
+                <a href="https://www.nielit.gov.in" style="color:#0d9488; text-decoration:none;">nielit.gov.in</a>
+            </div>
+        </div>
     </div>
     """)
 
