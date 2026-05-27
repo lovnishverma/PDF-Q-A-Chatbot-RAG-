@@ -8,6 +8,7 @@ sdk_version: 5.23.0
 app_file: app.py
 pinned: false
 license: mit
+short_description: RAG-based PDF Q&A chatbot — upload any PDF and ask questions
 ---
 
 <div align="center">
@@ -29,6 +30,8 @@ license: mit
 
 > 🎓 **RAG Project** · AI with ML 6-Month Course · NIELIT Ropar  
 > **Level:** Beginner · **Build time:** 1–2 hours · **Cost:** 100% Free
+>
+> GitHub Repo: https://github.com/lovnishverma/PDF-Q-A-Chatbot-RAG-
 
 </div>
 
