@@ -7,20 +7,20 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Embeddings & Vector Store
-from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 # LLM
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline, GenerationConfig
 
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
 EMBED_MODEL   = "BAAI/bge-small-en-v1.5"
-LLM_MODEL     = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-CHUNK_SIZE    = 800     # Larger chunks → more context per retrieval
+LLM_MODEL     = "Qwen/Qwen3-0.6B"   # 0.6B — beats TinyLlama 1.1B on instruction-following
+CHUNK_SIZE    = 800
 CHUNK_OVERLAP = 100
-TOP_K         = 3       # Fewer but more focused chunks
+TOP_K         = 3
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
@@ -39,19 +39,27 @@ embeddings = HuggingFaceEmbeddings(
 )
 print("✅ Embeddings ready.")
 
-print("⏳ Loading LLM (TinyLlama-1.1B-Chat)...")
+print("⏳ Loading LLM (Qwen3-0.6B)...")
 tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL)
-model     = AutoModelForCausalLM.from_pretrained(LLM_MODEL, torch_dtype=torch.float32)
+model     = AutoModelForCausalLM.from_pretrained(LLM_MODEL, dtype=torch.float32)
+
+# Qwen3 recommended non-thinking params (fast, no chain-of-thought overhead)
+# presence_penalty=1.5 is Qwen3's official fix for endless repetition
+gen_config = GenerationConfig(
+    max_new_tokens=200,
+    do_sample=True,
+    temperature=0.7,
+    top_p=0.8,
+    top_k=20,
+    presence_penalty=1.5,  # Qwen3 official anti-repetition param
+)
 
 hf_pipe = pipeline(
     "text-generation",
     model=model,
     tokenizer=tokenizer,
     return_full_text=False,
-    max_new_tokens=180,       # Shorter → faster, less hallucination
-    do_sample=False,          # Greedy decoding → deterministic & fast
-    repetition_penalty=1.4,   # Stronger penalty to stop loops
-    temperature=1.0,          # Required when do_sample=False
+    generation_config=gen_config,
     device=0 if torch.cuda.is_available() else -1,
 )
 print("✅ LLM ready.")
@@ -84,7 +92,8 @@ def is_too_short(text: str) -> bool:
     return len(words) <= 2 and "?" not in text
 
 # ─────────────────────────────────────────────
-# PROMPT BUILDER  (key fix: strict grounding)
+# PROMPT BUILDER
+# enable_thinking=False → skip <think> block, pure non-thinking mode (fast)
 # ─────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "You are a document Q&A assistant. Your ONLY job is to answer questions "
@@ -101,14 +110,17 @@ def build_prompt(context: str, question: str) -> str:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user",   "content": f"CONTEXT:\n{context}\n\nQUESTION: {question}"},
     ]
+    # enable_thinking=False → non-thinking mode, no <think>...</think> overhead
     return tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
     )
 
 # ─────────────────────────────────────────────
-# ANSWER CLEANER  (aggressive hallucination cut)
+# ANSWER CLEANER
 # ─────────────────────────────────────────────
-# Phrases that signal the model is drifting into hallucination
 STOP_PHRASES = [
     "we can assume", "it is likely", "it can be assumed", "it seems",
     "probably", "might have", "could have", "may have",
@@ -120,22 +132,22 @@ STOP_PHRASES = [
 def clean_answer(raw: str) -> str:
     if not isinstance(raw, str):
         raw = str(raw)
-    raw = raw.strip()
 
-    # Cut at any hallucination trigger (only if enough real text precedes it)
+    # Strip any stray <think>...</think> block just in case
+    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
     lower = raw.lower()
     for phrase in STOP_PHRASES:
         idx = lower.find(phrase)
-        if idx > 20:                  # keep at least 20 chars before cutting
+        if idx > 20:
             raw = raw[:idx].strip()
             break
 
-    # Remove stray markdown or repeated punctuation
     raw = re.sub(r'\*{2,}', '', raw)
     raw = re.sub(r'\.{3,}', '...', raw)
     raw = raw.strip(" \t\n.,")
 
-    # Sentence-level cut: keep max 3 sentences
+    # Keep max 3 sentences
     sentences = re.split(r'(?<=[.!?])\s+', raw)
     raw = " ".join(sentences[:3]).strip()
 
@@ -169,7 +181,7 @@ def process_pdf(pdf_file):
 
         vectorstore = FAISS.from_documents(chunks, embeddings)
         retriever   = vectorstore.as_retriever(
-            search_type="mmr",              # Max Marginal Relevance → diverse, non-redundant chunks
+            search_type="mmr",
             search_kwargs={"k": TOP_K, "fetch_k": TOP_K * 3}
         )
 
@@ -228,7 +240,6 @@ def chat(user_message, history):
         raw    = hf_pipe(prompt_text)[0]["generated_text"]
         answer = clean_answer(raw)
 
-        # Append page citations
         pages = sorted(set(
             doc.metadata.get("page", 0) + 1
             for doc in source_docs
@@ -326,7 +337,7 @@ with gr.Blocks(
             📄 PDF Q&amp;A Chatbot
         </h1>
         <p style="color:#475569;font-size:0.95rem;margin-top:8px;">
-            Retrieval-Augmented Generation · FAISS · BGE Embeddings · TinyLlama
+            Retrieval-Augmented Generation · FAISS · BGE Embeddings · Qwen3-0.6B
         </p>
         <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap;">
             <span style="background:#0d9488;color:white;padding:3px 12px;border-radius:20px;font-size:0.8rem;">🆓 100% Free</span>
@@ -357,7 +368,7 @@ with gr.Blocks(
 **Stack:**
 - 🧠 `BAAI/bge-small-en-v1.5` embeddings
 - 📦 FAISS + MMR retrieval (local)
-- 🤖 `TinyLlama-1.1B-Chat` LLM
+- 🤖 `Qwen3-0.6B` — non-thinking mode
 - 🔗 Strict grounding prompt
             """)
 
