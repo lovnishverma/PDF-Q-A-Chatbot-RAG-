@@ -158,16 +158,18 @@ git add . && git commit -m "deploy RAG chatbot" && git push
 ## 📦 Requirements
 
 ```txt
-gradio>=5.0.0
-langchain
-langchain-community
-langchain-text-splitters
-langchain-huggingface
-faiss-cpu
-transformers>=4.51.0
-torch
-sentence-transformers
-pypdf
+langchain>=0.3.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+langchain-huggingface>=0.1.0
+pypdf>=4.0.0
+faiss-cpu>=1.7.4
+sentence-transformers>=3.0.0
+transformers>=4.47.0
+tokenizers>=0.21.0
+torch>=2.1.0
+accelerate>=0.27.0
+huggingface_hub>=0.23.0
 ```
 
 ---
@@ -178,7 +180,7 @@ pypdf
 pdf-rag-chatbot/
 ├── app.py           # Main application (RAG pipeline + Gradio UI)
 ├── requirements.txt # Python dependencies
-└── README.md        # Documentation
+└── README.md        # Documentation (This File)
 ```
 
 ---
