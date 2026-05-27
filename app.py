@@ -1,5 +1,6 @@
 import gradio as gr
 import torch
+import re
 
 # PDF Loading
 from langchain_community.document_loaders import PyPDFLoader
@@ -10,8 +11,6 @@ from langchain_huggingface import HuggingFaceEmbeddings, HuggingFacePipeline
 from langchain_community.vectorstores import FAISS
 
 # LLM
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 # ─────────────────────────────────────────────
@@ -19,15 +18,15 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 # ─────────────────────────────────────────────
 EMBED_MODEL   = "BAAI/bge-small-en-v1.5"
 LLM_MODEL     = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-CHUNK_SIZE    = 500
-CHUNK_OVERLAP = 50
-TOP_K         = 5
+CHUNK_SIZE    = 800     # Larger chunks → more context per retrieval
+CHUNK_OVERLAP = 100
+TOP_K         = 3       # Fewer but more focused chunks
 
 # ─────────────────────────────────────────────
 # GLOBAL STATE
 # ─────────────────────────────────────────────
 vectorstore = None
-rag_chain   = None
+retriever   = None
 
 # ─────────────────────────────────────────────
 # LOAD MODELS AT STARTUP
@@ -49,12 +48,12 @@ hf_pipe = pipeline(
     model=model,
     tokenizer=tokenizer,
     return_full_text=False,
-    max_new_tokens=256,
-    do_sample=False,
-    repetition_penalty=1.3,
+    max_new_tokens=180,       # Shorter → faster, less hallucination
+    do_sample=False,          # Greedy decoding → deterministic & fast
+    repetition_penalty=1.4,   # Stronger penalty to stop loops
+    temperature=1.0,          # Required when do_sample=False
     device=0 if torch.cuda.is_available() else -1,
 )
-llm = HuggingFacePipeline(pipeline=hf_pipe)
 print("✅ LLM ready.")
 
 # ─────────────────────────────────────────────
@@ -75,55 +74,78 @@ SMALL_TALK = {
 }
 
 def is_greeting(text: str) -> bool:
-    cleaned = text.strip().lower().rstrip("!.,?")
-    return cleaned in GREETINGS
+    return text.strip().lower().rstrip("!.,?") in GREETINGS
 
 def is_small_talk(text: str) -> bool:
-    cleaned = text.strip().lower().rstrip("!.,?")
-    return cleaned in SMALL_TALK
+    return text.strip().lower().rstrip("!.,?") in SMALL_TALK
 
-def is_too_short_to_be_question(text: str) -> bool:
-    """Single words or very short phrases that aren't questions."""
+def is_too_short(text: str) -> bool:
     words = text.strip().split()
     return len(words) <= 2 and "?" not in text
 
 # ─────────────────────────────────────────────
-# USE TINYLLAMA CHAT TEMPLATE
+# PROMPT BUILDER  (key fix: strict grounding)
 # ─────────────────────────────────────────────
-SYSTEM_PROMPT = """You are a concise assistant. Answer ONLY from the context provided.
-If the answer is not in the context, say: I don't know based on the document.
-Give a short, direct answer. Do NOT repeat the question. Do NOT loop."""
+SYSTEM_PROMPT = (
+    "You are a document Q&A assistant. Your ONLY job is to answer questions "
+    "using the EXACT information written in the CONTEXT below.\n"
+    "Rules:\n"
+    "1. Use ONLY facts explicitly stated in the context. Do NOT infer, guess, or assume.\n"
+    "2. If the context does not contain the answer, reply: 'Not mentioned in the document.'\n"
+    "3. Answer in 1-3 short sentences. No preamble, no repetition of the question.\n"
+    "4. Never say 'we can assume' or 'it is likely'. Only state what is written."
+)
 
-def build_chat_prompt(context: str, question: str, history_text: str) -> str:
-    user_content = f"""Context from PDF:
-{context}
-
-{f'Previous conversation:{chr(10)}{history_text}' if history_text.strip() else ''}
-Question: {question}"""
-
+def build_prompt(context: str, question: str) -> str:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user",   "content": user_content},
+        {"role": "user",   "content": f"CONTEXT:\n{context}\n\nQUESTION: {question}"},
     ]
     return tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
 
+# ─────────────────────────────────────────────
+# ANSWER CLEANER  (aggressive hallucination cut)
+# ─────────────────────────────────────────────
+# Phrases that signal the model is drifting into hallucination
+STOP_PHRASES = [
+    "we can assume", "it is likely", "it can be assumed", "it seems",
+    "probably", "might have", "could have", "may have",
+    "question:", "human:", "user:", "assistant:",
+    "i am interested", "could you please", "can you please",
+    "<|", "\n\n\n",
+]
+
 def clean_answer(raw: str) -> str:
     if not isinstance(raw, str):
         raw = str(raw)
-    for stop in ["Question:", "I am interested", "Could you please", "Can you please",
-                 "Human:", "User:", "<|", "\n\n\n"]:
-        idx = raw.find(stop)
-        if idx > 30:
-            raw = raw[:idx]
-    return raw.strip() or "I don't know based on the document."
+    raw = raw.strip()
+
+    # Cut at any hallucination trigger (only if enough real text precedes it)
+    lower = raw.lower()
+    for phrase in STOP_PHRASES:
+        idx = lower.find(phrase)
+        if idx > 20:                  # keep at least 20 chars before cutting
+            raw = raw[:idx].strip()
+            break
+
+    # Remove stray markdown or repeated punctuation
+    raw = re.sub(r'\*{2,}', '', raw)
+    raw = re.sub(r'\.{3,}', '...', raw)
+    raw = raw.strip(" \t\n.,")
+
+    # Sentence-level cut: keep max 3 sentences
+    sentences = re.split(r'(?<=[.!?])\s+', raw)
+    raw = " ".join(sentences[:3]).strip()
+
+    return raw if raw else "Not mentioned in the document."
 
 # ─────────────────────────────────────────────
 # PROCESS PDF
 # ─────────────────────────────────────────────
 def process_pdf(pdf_file):
-    global vectorstore, rag_chain
+    global vectorstore, retriever
 
     if pdf_file is None:
         return "❌ Please upload a PDF file.", gr.update(interactive=False)
@@ -146,7 +168,10 @@ def process_pdf(pdf_file):
             return "❌ No text chunks. PDF may be image-based (scanned).", gr.update(interactive=False)
 
         vectorstore = FAISS.from_documents(chunks, embeddings)
-        rag_chain   = vectorstore.as_retriever(search_kwargs={"k": TOP_K})
+        retriever   = vectorstore.as_retriever(
+            search_type="mmr",              # Max Marginal Relevance → diverse, non-redundant chunks
+            search_kwargs={"k": TOP_K, "fetch_k": TOP_K * 3}
+        )
 
         return (
             f"✅ PDF processed!\n"
@@ -163,58 +188,47 @@ def process_pdf(pdf_file):
 # CHAT
 # ─────────────────────────────────────────────
 def chat(user_message, history):
-    global rag_chain, vectorstore
+    global retriever
 
     history = history or []
 
     if not user_message.strip():
         return history, ""
 
-    # ── Greeting check ──────────────────────────────────────────────
     if is_greeting(user_message):
         history.append({"role": "user",      "content": user_message})
         history.append({"role": "assistant", "content":
-            "👋 Hello! I'm your PDF assistant. Please upload a PDF and ask me questions about it."})
+            "👋 Hello! I'm your PDF assistant. Upload a PDF and ask me anything about it."})
         return history, ""
 
-    # ── Small talk check ────────────────────────────────────────────
     if is_small_talk(user_message):
         history.append({"role": "user",      "content": user_message})
         history.append({"role": "assistant", "content":
-            "😊 I'm here to help you with questions about your PDF document. "
-            "Feel free to ask anything about the uploaded file!"})
+            "😊 Happy to help! Ask any question about your uploaded PDF."})
         return history, ""
 
-    # ── PDF not loaded yet ──────────────────────────────────────────
-    if rag_chain is None:
+    if retriever is None:
         history.append({"role": "user",      "content": user_message})
         history.append({"role": "assistant", "content":
             "⚠️ Please upload and process a PDF first, then ask your question."})
         return history, ""
 
-    # ── Too short / not a real question ─────────────────────────────
-    if is_too_short_to_be_question(user_message):
+    if is_too_short(user_message):
         history.append({"role": "user",      "content": user_message})
         history.append({"role": "assistant", "content":
-            "🤔 Could you please ask a complete question about the PDF? "
-            "For example: *\"What is the main topic of this document?\"*"})
+            "🤔 Could you ask a complete question? e.g. *\"What is the main topic of this document?\"*"})
         return history, ""
 
     # ── RAG pipeline ────────────────────────────────────────────────
     try:
-        history_text = ""
-        msgs = history[-8:] if len(history) >= 2 else []
-        for msg in msgs:
-            role = "Human" if msg["role"] == "user" else "Assistant"
-            history_text += f"{role}: {msg['content']}\n"
-
-        source_docs  = rag_chain.invoke(user_message)
+        source_docs  = retriever.invoke(user_message)
         context_text = "\n\n".join(d.page_content for d in source_docs)
 
-        prompt_text = build_chat_prompt(context_text, user_message, history_text)
+        prompt_text = build_prompt(context_text, user_message)
         raw    = hf_pipe(prompt_text)[0]["generated_text"]
         answer = clean_answer(raw)
 
+        # Append page citations
         pages = sorted(set(
             doc.metadata.get("page", 0) + 1
             for doc in source_docs
@@ -342,9 +356,9 @@ with gr.Blocks(
 
 **Stack:**
 - 🧠 `BAAI/bge-small-en-v1.5` embeddings
-- 📦 FAISS vector store (local)
+- 📦 FAISS + MMR retrieval (local)
 - 🤖 `TinyLlama-1.1B-Chat` LLM
-- 🔗 Direct retrieval + LLM pipeline
+- 🔗 Strict grounding prompt
             """)
 
         with gr.Column(scale=2):
