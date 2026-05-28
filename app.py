@@ -23,12 +23,6 @@ CHUNK_OVERLAP = 100
 TOP_K         = 3
 
 # ─────────────────────────────────────────────
-# GLOBAL STATE
-# ─────────────────────────────────────────────
-vectorstore = None
-retriever   = None
-
-# ─────────────────────────────────────────────
 # LOAD MODELS AT STARTUP
 # ─────────────────────────────────────────────
 print("⏳ Loading embedding model...")
@@ -43,10 +37,6 @@ print("⏳ Loading LLM (Qwen3-0.6B)...")
 tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL)
 model     = AutoModelForCausalLM.from_pretrained(LLM_MODEL, torch_dtype=torch.float32)
 
-# FIX: Pass generation params directly to pipeline() instead of using
-# GenerationConfig object — newer transformers creates one internally,
-# causing "multiple values for keyword argument 'generation_config'".
-# Also: presence_penalty is OpenAI-only; use repetition_penalty instead.
 hf_pipe = pipeline(
     "text-generation",
     model=model,
@@ -91,7 +81,6 @@ def is_too_short(text: str) -> bool:
 
 # ─────────────────────────────────────────────
 # PROMPT BUILDER
-# enable_thinking=False → skip <think> block, pure non-thinking mode (fast)
 # ─────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "You are a document Q&A assistant. Your ONLY job is to answer questions "
@@ -108,7 +97,6 @@ def build_prompt(context: str, question: str) -> str:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user",   "content": f"CONTEXT:\n{context}\n\nQUESTION: {question}"},
     ]
-    # enable_thinking=False → non-thinking mode, no <think>...</think> overhead
     return tokenizer.apply_chat_template(
         messages,
         tokenize=False,
@@ -131,7 +119,6 @@ def clean_answer(raw: str) -> str:
     if not isinstance(raw, str):
         raw = str(raw)
 
-    # Strip any stray <think>...</think> block just in case
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
     lower = raw.lower()
@@ -145,27 +132,24 @@ def clean_answer(raw: str) -> str:
     raw = re.sub(r'\.{3,}', '...', raw)
     raw = raw.strip(" \t\n.,")
 
-    # Keep max 3 sentences
     sentences = re.split(r'(?<=[.!?])\s+', raw)
     raw = " ".join(sentences[:3]).strip()
 
     return raw if raw else "Not mentioned in the document."
 
 # ─────────────────────────────────────────────
-# PROCESS PDF
+# PROCESS PDF (Returns State)
 # ─────────────────────────────────────────────
 def process_pdf(pdf_file):
-    global vectorstore, retriever
-
     if pdf_file is None:
-        return "❌ Please upload a PDF file.", gr.update(interactive=False)
+        return "❌ Please upload a PDF file.", gr.update(interactive=False), None
 
     try:
         loader    = PyPDFLoader(pdf_file.name)
         documents = loader.load()
 
         if not documents:
-            return "❌ Could not extract text. Try another PDF.", gr.update(interactive=False)
+            return "❌ Could not extract text. Try another PDF.", gr.update(interactive=False), None
 
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=CHUNK_SIZE,
@@ -175,31 +159,29 @@ def process_pdf(pdf_file):
         chunks = splitter.split_documents(documents)
 
         if not chunks:
-            return "❌ No text chunks. PDF may be image-based (scanned).", gr.update(interactive=False)
+            return "❌ No text chunks. PDF may be image-based (scanned).", gr.update(interactive=False), None
 
-        vectorstore = FAISS.from_documents(chunks, embeddings)
-        retriever   = vectorstore.as_retriever(
+        vector_store = FAISS.from_documents(chunks, embeddings)
+        retriever_instance = vector_store.as_retriever(
             search_type="mmr",
             search_kwargs={"k": TOP_K, "fetch_k": TOP_K * 3}
         )
 
-        return (
+        status_msg = (
             f"✅ PDF processed!\n"
             f"📄 Pages: {len(documents)} | 🧩 Chunks: {len(chunks)}\n"
-            f"💬 You can now ask questions about the document.",
-            gr.update(interactive=True)
+            f"💬 You can now ask questions about the document."
         )
+        
+        return status_msg, gr.update(interactive=True), retriever_instance
 
     except Exception as e:
-        return f"❌ Error: {str(e)}", gr.update(interactive=False)
-
+        return f"❌ Error: {str(e)}", gr.update(interactive=False), None
 
 # ─────────────────────────────────────────────
 # CHAT
 # ─────────────────────────────────────────────
-def chat(user_message, history):
-    global retriever
-
+def chat(user_message, history, retriever_instance):
     history = history or []
 
     if not user_message.strip():
@@ -207,31 +189,27 @@ def chat(user_message, history):
 
     if is_greeting(user_message):
         history.append({"role": "user",      "content": user_message})
-        history.append({"role": "assistant", "content":
-            "👋 Hello! I'm your PDF assistant. Upload a PDF and ask me anything about it."})
+        history.append({"role": "assistant", "content": "👋 Hello! I'm your PDF assistant. Upload a PDF and ask me anything about it."})
         return history, ""
 
     if is_small_talk(user_message):
         history.append({"role": "user",      "content": user_message})
-        history.append({"role": "assistant", "content":
-            "😊 Happy to help! Ask any question about your uploaded PDF."})
+        history.append({"role": "assistant", "content": "😊 Happy to help! Ask any question about your uploaded PDF."})
         return history, ""
 
-    if retriever is None:
+    if retriever_instance is None:
         history.append({"role": "user",      "content": user_message})
-        history.append({"role": "assistant", "content":
-            "⚠️ Please upload and process a PDF first, then ask your question."})
+        history.append({"role": "assistant", "content": "⚠️ Please upload and process a PDF first, then ask your question."})
         return history, ""
 
     if is_too_short(user_message):
         history.append({"role": "user",      "content": user_message})
-        history.append({"role": "assistant", "content":
-            "🤔 Could you ask a complete question? e.g. *\"What is the main topic of this document?\"*"})
+        history.append({"role": "assistant", "content": "🤔 Could you ask a complete question? e.g. *\"What is the main topic of this document?\"*"})
         return history, ""
 
     # ── RAG pipeline ────────────────────────────────────────────────
     try:
-        source_docs  = retriever.invoke(user_message)
+        source_docs  = retriever_instance.invoke(user_message)
         context_text = "\n\n".join(d.page_content for d in source_docs)
 
         prompt_text = build_prompt(context_text, user_message)
@@ -255,24 +233,23 @@ def chat(user_message, history):
         history.append({"role": "assistant", "content": f"❌ Error: {str(e)}"})
         return history, ""
 
-
 def clear_chat():
     return [], ""
 
-
 # ─────────────────────────────────────────────
-# GRADIO UI
+# GRADIO UI & MOBILE CSS
 # ─────────────────────────────────────────────
 CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;500;600&display=swap');
 
 .gradio-container { font-family: 'Inter', sans-serif !important; max-width: 1200px !important; }
 
-.nielit-header { background: #0f172a; border-bottom: 3px solid #0d9488; }
-.nielit-footer { background: #0f172a; border-top: 2px solid #1e293b; }
+/* Base Styles */
+.nielit-header { background: #0f172a; border-bottom: 3px solid #0d9488; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 24px; }
+.nielit-footer { background: #1e293b; border-top: 2px solid #334155; margin-top: 24px; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 
 .upload-box label { color: #1e293b !important; font-weight: 500 !important; }
-.dark .upload-box label { color: #e2e8f0 !important; } /* Dark mode fix */
+.dark .upload-box label { color: #e2e8f0 !important; }
 
 .status-box textarea {
     background: #f0fdf4 !important;
@@ -282,36 +259,22 @@ CSS = """
     border: 1.5px solid #0d9488 !important;
     border-radius: 8px !important;
 }
-/* Status box dark mode fix */
-.dark .status-box textarea {
-    background: #064e3b !important;
-    color: #f0fdf4 !important;
-}
+.dark .status-box textarea { background: #064e3b !important; color: #f0fdf4 !important; }
 
 .status-box label { color: #1e293b !important; font-weight: 600 !important; }
-.dark .status-box label { color: #e2e8f0 !important; } /* Dark mode fix */
+.dark .status-box label { color: #e2e8f0 !important; }
 
-.msg-input textarea {
-    color: #111827 !important;
-    background: #ffffff !important;
-    font-size: 1rem !important;
-}
-/* Message input dark mode fix */
-.dark .msg-input textarea {
-    background: #1e293b !important;
-    color: #f8fafc !important;
-    border-color: #334155 !important;
-}
+.msg-input textarea { color: #111827 !important; background: #ffffff !important; font-size: 1rem !important; }
+.dark .msg-input textarea { background: #1e293b !important; color: #f8fafc !important; border-color: #334155 !important; }
 
 .msg-input label { color: #374151 !important; }
-.dark .msg-input label { color: #cbd5e1 !important; } /* Dark mode fix */
+.dark .msg-input label { color: #cbd5e1 !important; }
 
 .gradio-container .prose { color: #1e293b !important; }
 .gradio-container p, .gradio-container li { color: #374151 !important; }
 .gradio-container strong { color: #111827 !important; }
 .gradio-container code { background: #f1f5f9 !important; color: #0f766e !important; padding: 2px 5px; border-radius: 4px; }
 
-/* Text element dark mode fixes */
 .dark .gradio-container .prose { color: #f8fafc !important; }
 .dark .gradio-container p, .dark .gradio-container li { color: #cbd5e1 !important; }
 .dark .gradio-container strong { color: #ffffff !important; }
@@ -321,6 +284,31 @@ CSS = """
 .process-btn:hover { background: #0f766e !important; }
 
 .send-btn { background: #0d9488 !important; color: white !important; font-weight: 700 !important; border: none !important; }
+
+/* Mobile Responsiveness Rules */
+@media (max-width: 768px) {
+    .nielit-header, .nielit-footer { 
+        flex-direction: column; 
+        text-align: center; 
+        justify-content: center;
+        padding: 12px;
+    }
+    .nielit-header > div, .nielit-footer > div {
+        justify-content: center;
+        flex-direction: column;
+    }
+    .nielit-header img { margin-bottom: 8px; }
+    
+    /* Prevent iOS Safari auto-zoom on input focus */
+    .msg-input textarea {
+        font-size: 16px !important;
+    }
+    
+    /* Adjust chat window height on mobile */
+    .chat-window {
+        height: 400px !important;
+    }
+}
 """
 
 with gr.Blocks(
@@ -332,9 +320,12 @@ with gr.Blocks(
         font=gr.themes.GoogleFont("Inter")
     )
 ) as demo:
+    
+    # Hidden state to store the retriever per user session
+    session_retriever = gr.State(None)
 
     gr.HTML("""
-    <div class="nielit-header" style="padding:12px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+    <div class="nielit-header">
         <div style="display:flex;align-items:center;gap:14px;">
             <img src="https://www.nielit.gov.in/images/NIELIT_logo.jpg" alt="NIELIT Logo"
                  style="height:52px;border-radius:6px;background:white;padding:3px;"
@@ -348,12 +339,13 @@ with gr.Blocks(
                 </div>
             </div>
         </div>
-        <div style="color:#475569;font-size:0.72rem;text-align:right;font-family:'Space Mono',monospace;">
-            NIELIT ROPAR<br>AI WITH ML Course
+        <div style="color:#475569;font-size:0.72rem;font-family:'Space Mono',monospace;">
+            NIELIT ROPAR<br>Lovnish Verma
         </div>
     </div>
-    <div style="text-align:center;padding:20px 0 8px;">
-        <h1 style="font-family:'Space Mono',monospace;font-size:2rem;color:#0d9488;margin:0;">
+    
+    <div style="text-align:center;padding:20px 10px 8px;">
+        <h1 style="font-family:'Space Mono',monospace;font-size:2rem;color:#0d9488;margin:0;line-height:1.2;">
             📄 PDF Q&amp;A Chatbot
         </h1>
         <p style="color:#475569;font-size:0.95rem;margin-top:8px;">
@@ -368,7 +360,7 @@ with gr.Blocks(
     """)
 
     with gr.Row():
-        with gr.Column(scale=1):
+        with gr.Column(scale=1, min_width=300):
             gr.Markdown("### 📁 Upload PDF")
             pdf_input = gr.File(label="Drop your PDF here", file_types=[".pdf"],
                                 elem_classes=["upload-box"])
@@ -392,7 +384,7 @@ with gr.Blocks(
 - 🔗 Strict grounding prompt
             """)
 
-        with gr.Column(scale=2):
+        with gr.Column(scale=2, min_width=300):
             gr.Markdown("### 💬 Ask Questions")
             chatbot = gr.Chatbot(label="Conversation", height=500,
                                  type="messages",
@@ -407,28 +399,27 @@ with gr.Blocks(
                                       elem_classes=["send-btn"])
             clear_btn = gr.Button("🗑️ Clear Chat", variant="secondary", size="sm")
 
-    process_btn.click(fn=process_pdf, inputs=[pdf_input], outputs=[status_box, msg_input])
-    send_btn.click(fn=chat, inputs=[msg_input, chatbot], outputs=[chatbot, msg_input])
-    msg_input.submit(fn=chat, inputs=[msg_input, chatbot], outputs=[chatbot, msg_input])
+    # Connect UI components and Session State
+    process_btn.click(fn=process_pdf, inputs=[pdf_input], outputs=[status_box, msg_input, session_retriever])
+    send_btn.click(fn=chat, inputs=[msg_input, chatbot, session_retriever], outputs=[chatbot, msg_input])
+    msg_input.submit(fn=chat, inputs=[msg_input, chatbot, session_retriever], outputs=[chatbot, msg_input])
     clear_btn.click(fn=clear_chat, outputs=[chatbot, msg_input])
 
     gr.HTML("""
-    <div style="background:#1e293b;border-top:1px solid #334155;margin-top:24px;padding:16px 24px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-            <div style="display:flex;align-items:center;gap:10px;">
-                <img src="https://www.nielit.gov.in/images/NIELIT_logo.jpg" alt="NIELIT"
-                     style="height:32px;border-radius:4px;background:white;padding:2px;"
-                     onerror="this.style.display='none'">
-                <span style="color:white;font-size:0.78rem;font-family:'Space Mono',monospace;">
-                    &copy; 2026 Lovnish Verma. All rights reserved.
-                </span>
-            </div>
-            <div style="color:white;font-size:0.78rem;font-family:'Space Mono',monospace;text-align:right;">
-                RAG Chatbot &nbsp;|&nbsp;
-                Developed by <a href="https://github.com/lovnishverma" style="color:#0d9488;text-decoration:none;">Lovnish Verma</a>
-                &nbsp;|&nbsp;
-                <a href="https://www.lovnishverma.in" style="color:#0d9488;text-decoration:none;">lovnishverma.in</a>
-            </div>
+    <div class="nielit-footer">
+        <div style="display:flex;align-items:center;gap:10px;">
+            <img src="https://www.nielit.gov.in/images/NIELIT_logo.jpg" alt="NIELIT"
+                 style="height:32px;border-radius:4px;background:white;padding:2px;"
+                 onerror="this.style.display='none'">
+            <span style="color:white;font-size:0.78rem;font-family:'Space Mono',monospace;">
+                &copy; 2026 Lovnish Verma. All rights reserved.
+            </span>
+        </div>
+        <div style="color:white;font-size:0.78rem;font-family:'Space Mono',monospace;">
+            RAG Chatbot &nbsp;|&nbsp;
+            Developed by <a href="https://github.com/lovnishverma" style="color:#0d9488;text-decoration:none;">Lovnish Verma</a>
+            &nbsp;|&nbsp;
+            <a href="https://www.lovnishverma.in" style="color:#0d9488;text-decoration:none;">lovnishverma.in</a>
         </div>
     </div>
     """)
