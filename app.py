@@ -419,12 +419,12 @@ with gr.Blocks(
                 <img src="https://www.nielit.gov.in/images/NIELIT_logo.jpg" alt="NIELIT"
                      style="height:32px;border-radius:4px;background:white;padding:2px;"
                      onerror="this.style.display='none'">
-                <span style="color:#475569;font-size:0.78rem;font-family:'Space Mono',monospace;">
+                <span style="color:white;font-size:0.78rem;font-family:'Space Mono',monospace;">
                     &copy; 2026 Lovnish Verma. All rights reserved.
                 </span>
             </div>
-            <div style="color:#475569;font-size:0.78rem;font-family:'Space Mono',monospace;text-align:right;">
-                Project 1 — RAG Chatbot &nbsp;|&nbsp;
+            <div style="color:white;font-size:0.78rem;font-family:'Space Mono',monospace;text-align:right;">
+                RAG Chatbot &nbsp;|&nbsp;
                 Developed by <a href="https://github.com/lovnishverma" style="color:#0d9488;text-decoration:none;">Lovnish Verma</a>
                 &nbsp;|&nbsp;
                 <a href="https://www.lovnishverma.in" style="color:#0d9488;text-decoration:none;">lovnishverma.in</a>
