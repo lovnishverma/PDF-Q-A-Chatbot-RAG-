@@ -272,6 +272,7 @@ CSS = """
 .nielit-footer { background: #0f172a; border-top: 2px solid #1e293b; }
 
 .upload-box label { color: #1e293b !important; font-weight: 500 !important; }
+.dark .upload-box label { color: #e2e8f0 !important; } /* Dark mode fix */
 
 .status-box textarea {
     background: #f0fdf4 !important;
@@ -281,24 +282,45 @@ CSS = """
     border: 1.5px solid #0d9488 !important;
     border-radius: 8px !important;
 }
+/* Status box dark mode fix */
+.dark .status-box textarea {
+    background: #064e3b !important;
+    color: #f0fdf4 !important;
+}
+
 .status-box label { color: #1e293b !important; font-weight: 600 !important; }
+.dark .status-box label { color: #e2e8f0 !important; } /* Dark mode fix */
 
 .msg-input textarea {
     color: #111827 !important;
     background: #ffffff !important;
     font-size: 1rem !important;
 }
+/* Message input dark mode fix */
+.dark .msg-input textarea {
+    background: #1e293b !important;
+    color: #f8fafc !important;
+    border-color: #334155 !important;
+}
+
 .msg-input label { color: #374151 !important; }
+.dark .msg-input label { color: #cbd5e1 !important; } /* Dark mode fix */
 
 .gradio-container .prose { color: #1e293b !important; }
 .gradio-container p, .gradio-container li { color: #374151 !important; }
 .gradio-container strong { color: #111827 !important; }
 .gradio-container code { background: #f1f5f9 !important; color: #0f766e !important; padding: 2px 5px; border-radius: 4px; }
 
-.process-btn { background: #0d9488 !important; color: white !important; font-weight: 700 !important; font-size: 1rem !important; }
+/* Text element dark mode fixes */
+.dark .gradio-container .prose { color: #f8fafc !important; }
+.dark .gradio-container p, .dark .gradio-container li { color: #cbd5e1 !important; }
+.dark .gradio-container strong { color: #ffffff !important; }
+.dark .gradio-container code { background: #1e293b !important; color: #2dd4bf !important; }
+
+.process-btn { background: #0d9488 !important; color: white !important; font-weight: 700 !important; font-size: 1rem !important; border: none !important; }
 .process-btn:hover { background: #0f766e !important; }
 
-.send-btn { background: #0d9488 !important; color: white !important; font-weight: 700 !important; }
+.send-btn { background: #0d9488 !important; color: white !important; font-weight: 700 !important; border: none !important; }
 """
 
 with gr.Blocks(
@@ -398,14 +420,14 @@ with gr.Blocks(
                      style="height:32px;border-radius:4px;background:white;padding:2px;"
                      onerror="this.style.display='none'">
                 <span style="color:#475569;font-size:0.78rem;font-family:'Space Mono',monospace;">
-                    &copy; 2026 NIELIT Ropar. All rights reserved.
+                    &copy; 2026 Lovnish Verma. All rights reserved.
                 </span>
             </div>
             <div style="color:#475569;font-size:0.78rem;font-family:'Space Mono',monospace;text-align:right;">
                 Project 1 — RAG Chatbot &nbsp;|&nbsp;
                 Developed by <a href="https://github.com/lovnishverma" style="color:#0d9488;text-decoration:none;">Lovnish Verma</a>
                 &nbsp;|&nbsp;
-                <a href="https://www.nielit.gov.in" style="color:#0d9488;text-decoration:none;">nielit.gov.in</a>
+                <a href="https://www.lovnishverma.in" style="color:#0d9488;text-decoration:none;">lovnishverma.in</a>
             </div>
         </div>
     </div>
